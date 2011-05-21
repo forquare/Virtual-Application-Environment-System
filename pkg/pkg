@@ -1,0 +1,299 @@
+#!/bin/bash
+# 
+# Copyright © 2010, Ben Lavery
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+# 
+#     * Redistributions of source code must retain the above copyright notice,
+#        this list of conditions and the following disclaimer.
+#     * Redistributions in binary form must reproduce the above copyright notice,
+#        this list of conditions and the following disclaimer in the documentation
+#        and/or other materials provided with the distribution.
+#     * Neither the name of hashbang0.com nor the names of its
+#       contributors may be used to endorse or promote products derived from
+#       this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE 
+# USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Author Ben Lavery
+# Version: 0.4
+#
+###############################################################################
+# THE SCRIPT NEEDS TO BE RUN AS THE ROOT USER WITH A PRIVALEGED ROLE.  
+# THIS CAN BE EMULATED USING THE PFEXEC COMMAND.  THE USER ABLE TO DO THIS IS
+# USUALLY DEFINED ON INSTALLTION ALONG WITH THE ROOT PASSWORD.  THIS SCRIPT 
+# NEEDS ROOT PERMISSIONS TO MOVE SYSTEM FILES.
+###############################################################################
+# This script will do the following:
+###############################################################################
+# CHANGELOG
+# v0.4
+#    Install method still in beta.  Various OSOL components (most notably 
+#    Crossbow & NIS) need updating to more bug free, stable versions.  Not 
+#    possible until OSOL *NEXT* (dubbed osol 2010.04) is out.
+#    Beta uninstall method available.  Still needs work, e.g. marking IP
+#    address as free in the IP database.
+#
+# v0.3
+#    Beta install method
+#
+# v0.2
+#    Will currently call old pkg command and pass arguments to it.
+#
+#  v0.1
+#    Checks for root privilages.  Headings (comments) put into place for  
+#    future scripting.
+###############################################################################
+
+install(){
+	
+	PWD=`pwd`
+	
+	SEARCH_OUTPUT="/tmp/$$search"
+	search > $SEARCH_OUTPUT
+	
+	if [[ -s $SEARCH_OUTPUT ]]; then
+		echo "All is well" > /dev/null
+		rm $SEARCH_OUTPUT
+	else
+		rm $SEARCH_OUTPUT
+		echo "No package found"
+		usage
+	fi
+
+	########Set up network
+	#Find Free IP
+	IPADDRESS=`cat $IP_DB | grep -v "=" | head -1`
+	#Find VNIC name (Package name plus "_1" on the end)
+	APPEND="_1"
+	VNIC=`echo $NAME$APPEND`
+	#Create VNIC
+	dladm create-vnic -l $SWITCH $VNIC
+	#Add to IP-DB
+	cat $IP_DB | sed "s/$IPADDRESS$/$IPADDRESS=$VNIC/g" > $IP_DB-2
+	mv $IP_DB-2 $IP_DB
+	
+	########Start creating zone	
+	#Create temp config files, modify values as needed
+	ZONE_TEMPLATE=`echo "$TEMPLATES/master-zone.cfg"`
+	ZONE_SYSIDCFG=`echo "$TEMPLATES/master-sysidcfg.cfg"`
+	
+	cat $ZONE_TEMPLATE | sed "s/<NAME>/$NAME/g" | \
+	sed "s/<NIC>/$VNIC/g" > /tmp/zone-template
+
+	DOMAINNAME=`domainname`
+	MASTER_NAME=`hostname`
+	MASTER_ADDRESS=`ifconfig global_vnic1 | grep inet | awk '{ print $2 }'`
+	#Default route is IP address, but with 1
+	DEFAULT_ROUTE=`echo $IPADDRESS | sed 's/\.[0-9]\{1,3\}$/.1/g'`
+
+	cat $ZONE_SYSIDCFG | \
+	sed "s/<NAME>/$NAME/g" | \
+	sed "s/<IP-ADDRESS>/$IPADDRESS/g" | \
+	sed "s/<PASS>/$ROOT_HASH/g" | \
+	sed "s/<DOMAINNAME>/$DOMAINNAME/g" | \
+	sed "s/<MASTER-NAME>/$MASTER_NAME/g" | \
+	sed "s/<MASTER-ADDRESS>/$MASTER_ADDRESS/g" | \
+	sed "s/<DEFAULT-ROUTE>/$DEFAULT_ROUTE/g" > /tmp/zone-sysidcfg
+
+	#Create zone config
+	zonecfg -z $NAME -f /tmp/zone-template
+	
+	#Clone template zone
+	zoneadm -z $NAME clone template > /tmp/$NAME-install 2>&1
+	
+	#Ready zone
+	zoneadm -z $NAME ready
+	
+	#Copy config file
+	cd /export/vaes-zones/$NAME/root/etc
+	cp /tmp/zone-sysidcfg ./sysidcfg
+	
+	#Remove unconfigure file
+	rm /export/vaes-zones/$NAME/root/etc/.UNCONFIGURED
+	
+	#Make zone use NIS
+	cp /export/vaes-zones/$NAME/root/etc/nsswitch.nis \
+		/export/vaes-zones/$NAME/root/etc/nsswitch.conf
+	
+	#Add password for root
+	cat /export/vaes-zones/$NAME/root/etc/shadow | \
+	sed "s/root:/root:$ROOT_HASH/" > /export/vaes-zones/$NAME/root/etc/shadow2
+	
+	cat /export/vaes-zones/$NAME/root/etc/shadow2 > \
+		/export/vaes-zones/$NAME/root/etc/shadow
+		
+	#Add master to hosts file
+	HOST=`hostname`
+	/usr/gnu/bin/echo -e "$DEFAULT_ROUTE\t$HOST" >> \
+		/export/vaes-zones/$NAME/root/etc/inet/hosts
+		
+	#Make domainname persistant!
+	echo "vaes-domain" > /export/vaes-zones/$NAME/root/etc/defaultdomain
+	
+	#Copy ypinit_client script to zone
+	cp /var/vaes/scripts/custom_ypinit_client.sh \
+		/export/vaes-zones/$NAME/root/var/tmp
+		
+	################################
+	# THIS MAKES THE SCRIPT "WORK" #
+	################################
+	cp /etc/passwd /export/vaes-zones/$NAME/root/etc/passwd
+	cp /etc/shadow /export/vaes-zones/$NAME/root/etc/shadow
+	mkdir -p /export/vaes-zones/$NAME/root/export/home
+	
+	#Get out of the File System!
+	cd /
+	
+	#Boot zone
+	zoneadm -z $NAME boot
+	
+	#Configire zone
+	zlogin $NAME sysidconfig > /dev/null 2>&1
+	
+	#Sleep for 10 seconds to let things settle down
+	sleep 10
+	
+	#Halt zone, the ready again
+	zoneadm -z $NAME ready
+	
+	#Install defined package into zone, plus NIS and SUNWdbus
+	pkg-manage -R /export/vaes-zones/$NAME/root install $PACKAGE
+	pkg-manage -R /export/vaes-zones/$NAME/root install SUNWyp > /dev/null 2>&1
+	pkg-manage -R /export/vaes-zones/$NAME/root install SUNWdbus > /dev/null 2>&1
+	
+	#Add zone to hosts file and re-make the maps to put it into NIS
+	/usr/gnu/bin/echo -e "$IPADDRESS\t$NAME" >> /etc/inet/hosts
+	cd /var/yp
+	make > /dev/null 2>&1
+	cd $PWD
+	
+	#Boot zone
+	zoneadm -z $NAME boot
+	
+	#Plumb interface
+	zlogin $NAME ifconfig $VNIC plumb $IPADDRESS up
+	
+	#Mount home dirs
+	zlogin $NAME mount -F nfs $DEFAULT_ROUTE:/export/home /export/home
+	
+	#Make domain name
+#	zlogin $NAME domainname vaes-domain
+	
+	#Run custom ypinit script in zone, delete when done
+#	zlogin $NAME bash /var/tmp/custom_ypinit_client.sh -c $DEFAULT_ROUTE $NAME `domainname`
+#	zlogin $NAME rm /var/tmp/custom_ypinit_client.sh
+	
+	#Sleep for 10 seconds to let things settle down
+#	sleep 10
+	
+	#Start ypbind
+#	zlogin $NAME /usr/lib/netsvc/yp/ypbind -broadcast > /dev/null 2>&1
+
+	#Create bash file to represent installed app:
+	APP=`pkg-manage contents -r $PACKAGE | \
+		grep 'usr/bin' | \
+		head -2 | \
+		tail -1 | \
+		sed 's/\(.*\)\/\([^/]*\)/\2/g'`
+	FILE=/usr/bin/$APP
+	touch $FILE
+	echo "#!/bin/bash" >> $FILE
+	echo 'ssh -X $USER@'"$NAME $APP"' $* > /dev/null 2>&1' >> $FILE
+	chmod 755 $FILE
+}
+
+uninstall(){
+	echo "Not yet implemented"
+}
+
+upgrade(){
+	echo "Not yet implemented"
+}
+
+search(){
+	#Pass all search requests to pkg-manage (old pkg command)
+	pkg-manage search $PKG
+}
+
+usage(){
+	echo "Usage:"
+	echo "    pkg <install|update|search|uninstall> <Package_Name>"
+	echo "Non root usage:"
+	echo "    pfexec pkg"
+	echo ""
+	echo "THE SCRIPT NEEDS TO BE RUN AS THE ROOT USER WITH A PRIVALEGED ROLE."
+	echo "THIS CAN BE EMULATED USING THE PFEXEC COMMAND."
+	echo "THE USER ABLE TO DO THIS IS USUALLY DEFINED ON INSTALLTION ALONG"
+	echo "WITH THE ROOT PASSWORD.  THIS SCRIPT NEEDS ROOT PERMISSIONS TO MOVE"
+	echo "SYSTEM FILES."
+	
+	exit 0
+}
+
+#Check for root privilages
+AMIROOT=`whoami`
+if [[ $AMIROOT =~ root ]]; then
+	echo "all is well" > /dev/null
+else
+	echo "Not root"
+	usage
+fi
+
+#Read config file and extract applicable properties and values
+for EACH in `cat /etc/vaes.conf | grep -v "#"`; do
+	EACH=`echo $EACH | sed 's/=/\t/g'`
+	PROPERTY=`echo $EACH | awk '{ print $1 }'`
+	VALUE=`echo $EACH | awk '{ print $2 }'`
+	
+	case $PROPERTY in
+		IP-DB) IP_DB=`echo $VALUE`;;
+		MASTER-ZONE) MASTER_ZONE=`echo $VALUE | \
+			sed 's/\(.*\)\/\([^/]*\)/\2/'`;;
+		GLOBAL-SWITCH) SWITCH=`echo $VALUE`;;
+		ZONE-DIR) TEMPLATES=`echo $VALUE`;;
+		ROOT-HASH) ROOT_HASH=`echo $VALUE`;;
+	esac
+done
+
+#TEMP - Copy args to real pkg command
+#pkg-manage $@
+#exit 0
+
+#Look for last arg which will be the package, for some reason other 
+#methods do not work. I don't like this method, must change in future!
+for EACH in $*; do
+	PKG=`echo $EACH`
+done
+
+#Derive package to install (don't include @...)
+PACKAGE=`echo $PKG | sed 's/.*\(SUNW.*\)/\1/g' | sed 's/\(.*\)@.*/\1/g'`
+#Derive zone name, strip everything so we only get pkgname (no SUNW)
+NAME=`echo $PACKAGE | sed 's/SUNW\(.*\)/\1/g'`
+#Name shouldn't contain dashes, causes problems with zone names
+NAME=`echo $NAME | sed 's/-//g'`
+
+#See what we want to do
+for EACH in $*; do
+	case $EACH in
+		install) install
+					break;;
+		uninstall) uninstall
+					break;;
+		upgrade) upgrade
+					break;;
+		search) search
+					break;;
+	esac
+done

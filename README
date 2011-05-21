@@ -1,0 +1,53 @@
+This document describes how to install the Virtual Application Environment 
+System onto a physical machine, or a virtual machine.
+
+In order to install the system, you will need:
+	- Packaged files for the system ( vaes-20Apr2010-02-48-12.tar.bz2 ) 
+	  found on this CD
+	- A machine running OpenSolaris 2009.06
+	- Access to the OpenSolaris 2009.06 repository (online or local)
+	
+Contents
+	- Installing the system
+	- Installing an application
+	- Using an installed application
+###############################################################################
+
+###############################################################################	
+Installation of the system:
+1) Place the packaged files onto your machine running OpenSolaris 2009.06.
+2) Open a terminal window and navigate to the directory the packaged files
+   are in.
+3) Unpackage the files with the following commands:
+	$ bunzip2 vaes-20Apr2010-02-48-12.tar.bz2
+	$ tar -xf vaes-20Apr2010-02-48-12.tar
+4) In the same terminal window with root privileges, execute the
+   following command:
+	# bash INSTALL.sh
+   While the zone is installing, you may open a new terminal window and run
+   the following command to watch the installation progress:
+	$ tail -f /tmp/zone_install_progress
+5) The script will notify you when it has finished.
+###############################################################################
+
+###############################################################################
+Installation of software:
+1) As a user with root privileges, search for the desired package using the 
+   following command in a terminal window:
+	# pkg search <package>
+2) As a user with root privileges, install the package found using the 
+   following command:
+	# pkg install <package>
+3) View output on screen and wait until the process is complete
+4) The application is now installed
+###############################################################################
+
+###############################################################################
+To use installed software:
+1) As your normal user, simply execute the normal command for the application
+   you wish to launch.  For example, if you wish to launch"openoffice.org3", 
+   run the following command:
+	$ openoffice.org3
+2) When instructed, insert your password
+3) Use application as normal
+###############################################################################

@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<!DOCTYPE service_bundle SYSTEM "/usr/share/lib/xml/dtd/service_bundle.dtd.1">
+<!--
+	This service will kick off a script which will bring up all of our 
+	dladm related things (VNICs/etherstubs/etc.) on startup.
+-->
+
+<service_bundle type='manifest' name='SUNWcsr:bring_up_virt_net'>
+
+<service
+	name='site/bring_up_virt_net'
+	type='service'
+	version='1'>
+
+	<create_default_instance enabled='false' />
+
+	<single_instance/>
+
+	<dependency
+		name='milestone'
+		grouping='require_all'
+		restart_on='error'
+		type='service'>
+		<service_fmri value='svc:/milestone/network' />
+	</dependency>
+
+	<dependency
+		name='config_data'
+		grouping='require_all'
+		restart_on='restart'
+		type='path'>
+		<service_fmri value='file://localhost/bin/bring_up_virt_net.sh' />
+	</dependency>
+
+	<exec_method
+		type='method'
+		name='start'
+		exec='/usr/bin/bash /bin/bring_up_virt_net.sh'
+		timeout_seconds='60' />
+
+	<exec_method
+		type='method'
+		name='stop'
+		exec=':kill'
+		timeout_seconds='60' />
+		
+	<property_group name='startd' type='framework'>
+		<propval name='duration' type='astring' value='transient' />
+	</property_group>
+	
+
+	<template>
+		<common_name>
+			<loctext xml:lang='C'>
+			bring_up_virt_net
+			</loctext>
+		</common_name>
+		<documentation>
+			<manpage title='' section=''
+				manpath='' />
+		</documentation>
+	</template>
+</service>
+
+</service_bundle>
